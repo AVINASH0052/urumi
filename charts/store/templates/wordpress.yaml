@@ -1,0 +1,73 @@
+{{- $name := printf "%s-wordpress" (include "store.fullname" .) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.wordpress.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "store.selector" (list . "wordpress") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: wordpress
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # RWO volume: the old pod must release it first
+  selector:
+    matchLabels: {{- include "store.selector" (list . "wordpress") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "store.selector" (list . "wordpress") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: wordpress
+          image: {{ .Values.wordpress.image }}
+          env: {{- include "store.wpEnv" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 80
+          # First boot copies WP core onto the volume; give it time before liveness kicks in.
+          startupProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 5
+            failureThreshold: 60
+          # wp-login.php needs PHP + DB, so "ready" means the store can actually serve.
+          # Not-yet-installed WP answers 302 to install.php, which also counts as ready.
+          readinessProbe:
+            httpGet: { path: /wp-login.php, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 20
+          resources: {{- toYaml .Values.wordpress.resources | nindent 12 }}
+          volumeMounts:
+            - name: html
+              mountPath: /var/www/html
+      volumes:
+        - name: html
+          persistentVolumeClaim:
+            claimName: {{ $name }}

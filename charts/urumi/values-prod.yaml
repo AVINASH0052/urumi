@@ -1,0 +1,35 @@
+# k3s on a VPS. Same charts; only these values differ from local.
+global:
+  domain: shop.example.com            # DNS: store.<domain> and app.<domain> -> VPS IP
+
+store:
+  ingress:
+    className: traefik                # k3s ships Traefik
+    tls:
+      enabled: true
+      clusterIssuer: letsencrypt-prod # cert-manager ClusterIssuer (see README)
+  storageClass: local-path            # switch to longhorn etc. on multi-node
+  existingSecret: urumi-store         # created out-of-band, never generated in prod
+  site:
+    adminEmail: ops@shop.example.com
+    wooVersion: latest                # pin an exact version before going live
+    sampleProducts: false
+  mariadb:
+    storage: 10Gi
+  wordpress:
+    storage: 10Gi
+
+platform:
+  ingress:
+    className: traefik
+    tls:
+      enabled: true
+      clusterIssuer: letsencrypt-prod
+  storageClass: local-path
+  existingSecret: urumi-gateway      # created out-of-band (see README)
+  storeSecret: urumi-store
+  gateway:
+    replicas: 2                      # stateless MCP + Postgres: any replica serves any request
+    bootstrapAdminEmail: ops@shop.example.com
+  postgres:
+    storage: 10Gi

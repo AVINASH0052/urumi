@@ -1,0 +1,19 @@
+# k3d on a laptop. *.localtest.me resolves to 127.0.0.1, so no /etc/hosts edits.
+global:
+  domain: localtest.me
+
+store:
+  ingress:
+    className: traefik
+    tls:
+      enabled: false
+  storageClass: local-path
+  mariadb:
+    storage: 1Gi
+  wordpress:
+    storage: 1Gi
+
+platform:
+  storageClass: local-path
+  gateway:
+    replicas: 1

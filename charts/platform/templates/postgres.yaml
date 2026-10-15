@@ -1,0 +1,62 @@
+{{- $name := printf "%s-postgres" .Release.Name }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "platform.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{- include "platform.selector" (list . "postgres") | nindent 4 }}
+  ports:
+    - { name: pg, port: 5432 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels: {{- include "platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels: {{- include "platform.selector" (list . "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "platform.selector" (list . "postgres") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          env:
+            - { name: POSTGRES_USER, value: gateway }
+            - { name: POSTGRES_DB, value: gateway }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+            {{- include "platform.secretEnv" (list . "POSTGRES_PASSWORD" (include "platform.secretName" .) "POSTGRES_PASSWORD") | nindent 12 }}
+          ports:
+            - { name: pg, containerPort: 5432 }
+          startupProbe:
+            exec: { command: [pg_isready, -U, gateway, -h, 127.0.0.1] }
+            periodSeconds: 3
+            failureThreshold: 60
+          readinessProbe:
+            exec: { command: [pg_isready, -U, gateway, -h, 127.0.0.1] }
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: pg }
+            periodSeconds: 20
+          resources: {{- toYaml .Values.postgres.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storage }}

@@ -1,0 +1,6 @@
+# Shared defaults. Pick an environment with -f values-local.yaml or -f values-prod.yaml.
+global:
+  domain: localtest.me
+
+store: {}
+platform: {}

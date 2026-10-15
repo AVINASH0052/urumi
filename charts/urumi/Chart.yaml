@@ -1,0 +1,13 @@
+apiVersion: v2
+name: urumi
+description: WooCommerce hosting with a team MCP gateway. One release = the whole platform.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: store
+    version: 0.1.0
+    repository: file://../store
+  - name: platform
+    version: 0.1.0
+    repository: file://../platform

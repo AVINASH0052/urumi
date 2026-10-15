@@ -1,0 +1,61 @@
+{{- if .Values.wooMcp.enabled }}
+{{- $name := printf "%s-woo-mcp" (include "store.fullname" .) }}
+# Internal only: ClusterIP, no Ingress, NetworkPolicy admits the gateway alone, plus a bearer token.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "store.selector" (list . "woo-mcp") | nindent 4 }}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: woo-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "store.selector" (list . "woo-mcp") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "store.selector" (list . "woo-mcp") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: woo-mcp
+          image: {{ .Values.wooMcp.image }}
+          imagePullPolicy: {{ .Values.wooMcp.pullPolicy }}
+          env:
+            - name: WC_URL
+              value: http://{{ include "store.fullname" . }}-wordpress
+            - name: STORE_PUBLIC_URL
+              value: {{ include "store.url" . | quote }}
+            {{- include "store.secretEnv" (list . "WC_CONSUMER_KEY" "WC_CONSUMER_KEY") | nindent 12 }}
+            {{- include "store.secretEnv" (list . "WC_CONSUMER_SECRET" "WC_CONSUMER_SECRET") | nindent 12 }}
+            {{- include "store.secretEnv" (list . "MCP_TOKEN" "WOO_MCP_TOKEN") | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources: {{- toYaml .Values.wooMcp.resources | nindent 12 }}
+{{- end }}

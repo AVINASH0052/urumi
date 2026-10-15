@@ -1,0 +1,6 @@
+Storefront:  {{ include "store.url" . }}
+WP admin:    {{ include "store.url" . }}/wp-admin   (user: {{ .Values.site.adminUser }})
+Admin password:
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "store.secretName" . }} -o jsonpath='{.data.WP_ADMIN_PASSWORD}' | base64 -d; echo
+Setup logs:
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "store.fullname" . }}-setup

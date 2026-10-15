@@ -1,0 +1,6 @@
+**/node_modules
+**/dist
+apps/gateway/public
+.git
+charts
+docs

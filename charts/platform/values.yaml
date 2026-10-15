@@ -1,0 +1,66 @@
+global:
+  domain: localtest.me
+
+host: ""                         # empty => app.<global.domain>
+
+ingress:
+  className: traefik
+  annotations: {}
+  tls:
+    enabled: false
+    clusterIssuer: ""
+
+# Pre-created Secret instead of a generated one (prod). Keys: POSTGRES_PASSWORD, SESSION_SECRET,
+# CREDENTIALS_KEY (base64 of 32 bytes), BOOTSTRAP_ADMIN_PASSWORD, UTILS_MCP_TOKEN, LLM_API_KEY
+existingSecret: ""
+# Secret holding WOO_MCP_TOKEN (the store chart's). Empty => "<release>-store".
+storeSecret: ""
+
+storageClass: ""
+
+gateway:
+  image: urumi/gateway:dev
+  pullPolicy: IfNotPresent
+  replicas: 1
+  bootstrapAdminEmail: admin@example.com
+  pollMs: 10000
+  # Extra hostnames admins may register that resolve to cluster/private IPs.
+  extraAllowedHosts: []
+  llm:
+    # Any OpenAI-compatible API. Default verified with the full DoD run (scripts/dod.sh, 35/35):
+    # NVIDIA API catalog + z-ai/glm-5.3-flash (fast, reliable tool calling).
+    # Also works: Groq https://api.groq.com/openai/v1 + openai/gpt-oss-120b (free tier: 8k tokens/min).
+    baseUrl: https://integrate.api.nvidia.com/v1
+    model: z-ai/glm-5.3-flash
+    apiKey: ""                   # only used to generate the Secret; prefer existingSecret
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+postgres:
+  image: postgres:16.9-alpine
+  storage: 1Gi
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+utilsMcp:
+  image: urumi/utils-mcp:dev
+  pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+
+everythingMcp:
+  image: urumi/everything-mcp:dev
+  pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 20m, memory: 96Mi }
+    limits: { cpu: 300m, memory: 384Mi }
+
+networkPolicy:
+  enabled: true
+  ingressController:
+    namespace: kube-system
+    podLabels:
+      app.kubernetes.io/name: traefik

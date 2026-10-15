@@ -1,0 +1,64 @@
+{{- $fullname := include "store.fullname" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-setup
+  labels: {{- include "store.labels" . | nindent 4 }}
+data:
+  setup.sh: |- {{- .Files.Get "files/setup.sh" | nindent 4 }}
+  ensure-api-key.php: |- {{- .Files.Get "files/ensure-api-key.php" | nindent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-setup
+  labels: {{- include "store.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation   # keep the last run's logs around
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: {{ .Values.setup.timeoutSeconds }}
+  template:
+    metadata:
+      labels: {{- include "store.selector" (list . "setup") | nindent 8 }}
+      annotations:
+        checksum/script: {{ .Files.Get "files/setup.sh" | sha256sum }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        # wordpress:cli is Alpine (www-data = 82) but the Apache image owns files as 33.
+        runAsUser: 33
+        runAsGroup: 33
+      containers:
+        - name: setup
+          image: {{ .Values.setup.image }}
+          command: ["/bin/sh", "/scripts/setup.sh"]
+          env:
+            {{- include "store.wpEnv" . | nindent 12 }}
+            - { name: HOME, value: /tmp }
+            - { name: WP_CLI_CACHE_DIR, value: /tmp/wp-cli-cache }
+            - { name: WP_CLI_PHP_ARGS, value: "-d memory_limit=512M" }
+            - { name: SITE_URL, value: {{ include "store.url" . | quote }} }
+            - { name: SITE_TITLE, value: {{ .Values.site.title | quote }} }
+            - { name: WP_ADMIN_USER, value: {{ .Values.site.adminUser | quote }} }
+            - { name: WP_ADMIN_EMAIL, value: {{ .Values.site.adminEmail | quote }} }
+            - { name: WC_VERSION, value: {{ .Values.site.wooVersion | quote }} }
+            - { name: WC_CURRENCY, value: {{ .Values.site.currency | quote }} }
+            - { name: WC_COUNTRY, value: {{ .Values.site.country | quote }} }
+            - { name: SAMPLE_PRODUCTS, value: {{ .Values.site.sampleProducts | quote }} }
+            {{- include "store.secretEnv" (list . "WP_ADMIN_PASSWORD" "WP_ADMIN_PASSWORD") | nindent 12 }}
+            {{- include "store.secretEnv" (list . "WC_CONSUMER_KEY" "WC_CONSUMER_KEY") | nindent 12 }}
+            {{- include "store.secretEnv" (list . "WC_CONSUMER_SECRET" "WC_CONSUMER_SECRET") | nindent 12 }}
+          resources: {{- toYaml .Values.setup.resources | nindent 12 }}
+          volumeMounts:
+            - { name: html, mountPath: /var/www/html }
+            - { name: scripts, mountPath: /scripts }
+      volumes:
+        - name: html
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-wordpress
+        - name: scripts
+          configMap:
+            name: {{ $fullname }}-setup

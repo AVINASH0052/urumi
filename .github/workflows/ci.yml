@@ -1,0 +1,50 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with: { version: v3.16.4 }
+      - name: kubeconform
+        run: curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | sudo tar xz -C /usr/local/bin kubeconform
+      - run: make lint
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci && npm run typecheck && npm test
+
+  # Real cluster, real images, real WooCommerce: the source of truth for "it works".
+  e2e:
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with: { version: v3.16.4 }
+      - name: k3d
+        run: curl -sSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.8.3 bash
+      - run: make cluster
+      - run: make images import
+      - run: make deploy
+      - run: scripts/smoke.sh
+      # Also emitted as an annotation, so the failure is readable through the GitHub API.
+      - name: Dump cluster state
+        if: failure()
+        run: |
+          {
+            kubectl get pods -A -o wide
+            kubectl -n urumi get svc,ingress,pvc,netpol
+            kubectl -n urumi get events --sort-by=.lastTimestamp | tail -n 25
+            kubectl -n urumi logs job/urumi-setup --tail=40
+            kubectl -n urumi logs -l app.kubernetes.io/component=woo-mcp --tail=40
+            kubectl -n urumi logs -l app.kubernetes.io/component=gateway --tail=60
+            curl -sv -m 5 http://store.localtest.me/ -o /dev/null 2>&1 | tail -n 15
+          } > dump.txt 2>&1 || true
+          cat dump.txt
+          echo "::error title=cluster dump::$(tail -c 60000 dump.txt | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')"

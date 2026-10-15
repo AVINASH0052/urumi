@@ -1,0 +1,113 @@
+{{- $name := printf "%s-gateway" .Release.Name }}
+{{- $rel := .Release.Name }}
+{{- $secret := include "platform.secretName" . }}
+{{- $seed := list
+  (dict "slug" "woo" "name" "WooCommerce" "url" (printf "http://%s-woo-mcp:3000/mcp" $rel) "authType" "bearer" "credentialEnv" "WOO_MCP_TOKEN")
+  (dict "slug" "utils" "name" "Utilities" "url" (printf "http://%s-utils-mcp:3000/mcp" $rel) "authType" "bearer" "credentialEnv" "UTILS_MCP_TOKEN")
+  (dict "slug" "everything" "name" "Everything (reference)" "url" (printf "http://%s-everything-mcp:3001/mcp" $rel) "authType" "none") }}
+{{- $allowed := concat (list (printf "%s-woo-mcp" $rel) (printf "%s-utils-mcp" $rel) (printf "%s-everything-mcp" $rel)) .Values.gateway.extraAllowedHosts }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "platform.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "platform.selector" (list . "gateway") | nindent 4 }}
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: {{- include "platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels: {{- include "platform.selector" (list . "gateway") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "platform.selector" (list . "gateway") | nindent 8 }}
+      annotations:
+        # Roll the pods when the LLM key, model or provider changes via values.
+        checksum/llm: {{ list .Values.gateway.llm.apiKey .Values.gateway.llm.model .Values.gateway.llm.baseUrl | toJson | sha256sum | trunc 12 | quote }}
+    spec:
+      automountServiceAccountToken: false   # the gateway needs no Kubernetes API access
+      securityContext: {{- include "platform.podSecurity" . | nindent 8 }}
+      containers:
+        - name: gateway
+          image: {{ .Values.gateway.image }}
+          imagePullPolicy: {{ .Values.gateway.pullPolicy }}
+          env:
+            {{- include "platform.secretEnv" (list . "POSTGRES_PASSWORD" $secret "POSTGRES_PASSWORD") | nindent 12 }}
+            - name: DATABASE_URL
+              value: postgres://gateway:$(POSTGRES_PASSWORD)@{{ $rel }}-postgres:5432/gateway
+            {{- include "platform.secretEnv" (list . "SESSION_SECRET" $secret "SESSION_SECRET") | nindent 12 }}
+            {{- include "platform.secretEnv" (list . "CREDENTIALS_KEY" $secret "CREDENTIALS_KEY") | nindent 12 }}
+            {{- include "platform.secretEnv" (list . "BOOTSTRAP_ADMIN_PASSWORD" $secret "BOOTSTRAP_ADMIN_PASSWORD") | nindent 12 }}
+            {{- include "platform.secretEnv" (list . "UTILS_MCP_TOKEN" $secret "UTILS_MCP_TOKEN") | nindent 12 }}
+            {{- include "platform.secretEnv" (list . "LLM_API_KEY" $secret "LLM_API_KEY") | nindent 12 }}
+            {{- include "platform.secretEnv" (list . "WOO_MCP_TOKEN" (include "platform.storeSecret" .) "WOO_MCP_TOKEN") | nindent 12 }}
+            - { name: BOOTSTRAP_ADMIN_EMAIL, value: {{ .Values.gateway.bootstrapAdminEmail | quote }} }
+            - { name: PUBLIC_URL, value: {{ include "platform.url" . | quote }} }
+            - { name: SECURE_COOKIES, value: {{ .Values.ingress.tls.enabled | quote }} }
+            - { name: POLL_MS, value: {{ .Values.gateway.pollMs | quote }} }
+            - { name: SEED_SERVERS, value: {{ toJson $seed | quote }} }
+            - { name: SSRF_ALLOWED_HOSTS, value: {{ join "," $allowed | quote }} }
+            - { name: LLM_BASE_URL, value: {{ .Values.gateway.llm.baseUrl | quote }} }
+            - { name: LLM_MODEL, value: {{ .Values.gateway.llm.model | quote }} }
+          ports:
+            - { name: http, containerPort: 3000 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }   # DB reachable
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          securityContext: {{- include "platform.containerSecurity" . | nindent 12 }}
+          resources: {{- toYaml .Values.gateway.resources | nindent 12 }}
+{{- if gt (int .Values.gateway.replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  labels: {{- include "platform.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {{- include "platform.selector" (list . "gateway") | nindent 6 }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  labels: {{- include "platform.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.tls.clusterIssuer }}
+    cert-manager.io/cluster-issuer: {{ . }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ include "platform.host" . }}]
+      secretName: {{ $name }}-tls
+  {{- end }}
+  rules:
+    - host: {{ include "platform.host" . }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port: { name: http }

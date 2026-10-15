@@ -1,0 +1,97 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $rel := .Release.Name }}
+# Deny all ingress to this store's pods; the policies below open only what is needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $rel }}-store-default-deny
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: store
+      app.kubernetes.io/instance: {{ $rel }}
+  policyTypes: [Ingress]
+---
+# MariaDB: only WordPress and the setup Job of the same store.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $rel }}-mariadb
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "store.selector" (list . "mariadb") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {{- include "store.selector" (list . "wordpress") | nindent 14 }}
+        - podSelector:
+            matchLabels: {{- include "store.selector" (list . "setup") | nindent 14 }}
+      ports:
+        - port: 3306
+---
+# WordPress: the ingress controller (public storefront) and this store's woo-mcp only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $rel }}-wordpress
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "store.selector" (list . "wordpress") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressController.namespace }}
+          podSelector:
+            matchLabels: {{- toYaml .Values.networkPolicy.ingressController.podLabels | nindent 14 }}
+        - podSelector:
+            matchLabels: {{- include "store.selector" (list . "woo-mcp") | nindent 14 }}
+      ports:
+        - port: 80
+{{- if .Values.wooMcp.enabled }}
+---
+# woo-mcp: reachable from the gateway only; may talk to its own WordPress and DNS, nothing else.
+# A compromised woo-mcp can't reach the DB, other stores, or the internet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $rel }}-woo-mcp
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "store.selector" (list . "woo-mcp") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {{- toYaml .Values.networkPolicy.gateway.podLabels | nindent 14 }}
+          {{- with .Values.networkPolicy.gateway.namespace }}
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+          {{- end }}
+      ports:
+        - port: 3000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {{- include "store.selector" (list . "wordpress") | nindent 14 }}
+      ports:
+        - port: 80
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+{{- end }}
+{{- end }}

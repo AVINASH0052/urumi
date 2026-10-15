@@ -1,0 +1,69 @@
+{{- $name := printf "%s-mariadb" (include "store.fullname" .) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{- include "store.selector" (list . "mariadb") | nindent 4 }}
+  ports:
+    - name: mysql
+      port: 3306
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels: {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mariadb
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels: {{- include "store.selector" (list . "mariadb") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "store.selector" (list . "mariadb") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: mariadb
+          image: {{ .Values.mariadb.image }}
+          env:
+            - name: MARIADB_DATABASE
+              value: {{ .Values.mariadb.database | quote }}
+            - name: MARIADB_USER
+              value: {{ .Values.mariadb.user | quote }}
+            {{- include "store.secretEnv" (list . "MARIADB_PASSWORD" "MARIADB_PASSWORD") | nindent 12 }}
+            {{- include "store.secretEnv" (list . "MARIADB_ROOT_PASSWORD" "MARIADB_ROOT_PASSWORD") | nindent 12 }}
+          ports:
+            - name: mysql
+              containerPort: 3306
+          # mariadb-admin ping exits 0 whenever the server answers, no credentials needed.
+          startupProbe:
+            exec: { command: ["mariadb-admin", "ping", "-h", "127.0.0.1"] }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec: { command: ["mariadb-admin", "ping", "-h", "127.0.0.1"] }
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: mysql }
+            periodSeconds: 20
+            failureThreshold: 3
+          resources: {{- toYaml .Values.mariadb.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.mariadb.storage }}

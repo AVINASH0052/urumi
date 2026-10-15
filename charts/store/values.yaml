@@ -1,0 +1,73 @@
+# Defaults for one store. Environment specifics live in charts/urumi/values-*.yaml.
+global:
+  domain: localtest.me
+
+# Public hostname. Empty => "store.<global.domain>".
+host: ""
+
+ingress:
+  className: traefik
+  annotations: {}
+  tls:
+    enabled: false
+    clusterIssuer: ""          # e.g. letsencrypt-prod (cert-manager)
+
+# Set to use a pre-created Secret instead of a Helm-generated one (prod).
+# Required keys: MARIADB_ROOT_PASSWORD, MARIADB_PASSWORD, WP_ADMIN_PASSWORD,
+#                WC_CONSUMER_KEY, WC_CONSUMER_SECRET, WOO_MCP_TOKEN
+existingSecret: ""
+
+storageClass: ""               # "" = cluster default (local-path on k3s/k3d)
+
+site:
+  title: Urumi Demo Store
+  adminUser: admin
+  adminEmail: admin@example.com
+  currency: USD
+  country: "US:CA"
+  wooVersion: latest           # pin for reproducible prod installs, e.g. "10.2.1"
+  sampleProducts: true
+
+mariadb:
+  image: mariadb:11.4.13
+  database: wordpress
+  user: wordpress
+  storage: 2Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+wordpress:
+  image: wordpress:7.1.1-php8.3-apache
+  storage: 2Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+setup:
+  image: wordpress:cli-2.12.0-php8.3
+  timeoutSeconds: 900
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+wooMcp:
+  enabled: true
+  image: urumi/woo-mcp:dev
+  pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+
+networkPolicy:
+  enabled: true
+  # Pods allowed to call woo-mcp: only the gateway. namespace "" = same namespace as the store.
+  gateway:
+    namespace: ""
+    podLabels:
+      app.kubernetes.io/component: gateway
+  # Where the ingress controller lives (k3s/k3d: Traefik in kube-system).
+  ingressController:
+    namespace: kube-system
+    podLabels:
+      app.kubernetes.io/name: traefik

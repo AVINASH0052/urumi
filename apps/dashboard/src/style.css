@@ -1,0 +1,19 @@
+:root { --pico-font-size: 95%; }
+nav a[aria-current='page'] { font-weight: 700; text-decoration: underline; }
+.badge { display: inline-block; padding: 0.1rem 0.55rem; border-radius: 1rem; font-size: 0.8rem; font-weight: 600; color: #fff; }
+.badge.connected { background: #2e7d32; }
+.badge.unreachable { background: #c62828; }
+.badge.disabled, .badge.unknown { background: #757575; }
+.error { color: #c62828; }
+.muted { color: var(--pico-muted-color); }
+.row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.row > * { margin-bottom: 0; }
+pre.secret { white-space: pre-wrap; word-break: break-all; }
+.chat { display: flex; flex-direction: column; gap: 0.75rem; }
+.msg { padding: 0.75rem 1rem; border-radius: 0.5rem; white-space: pre-wrap; }
+.msg.user { align-self: flex-end; background: var(--pico-primary-background); color: var(--pico-primary-inverse); max-width: 80%; }
+.msg.assistant { background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); }
+.tool { font-size: 0.85rem; margin: 0.25rem 0; }
+.tool summary { cursor: pointer; }
+.tool.err summary { color: #c62828; }
+table td, table th { font-size: 0.9rem; vertical-align: top; }

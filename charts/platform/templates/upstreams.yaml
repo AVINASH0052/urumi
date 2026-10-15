@@ -1,0 +1,58 @@
+{{- /* Two extra upstream MCP servers. Internal only: ClusterIP, no Ingress, gateway-only NetworkPolicy. */}}
+{{- $rel := .Release.Name }}
+{{- range $u := list
+  (dict "key" "utilsMcp" "name" "utils-mcp" "port" 3000 "http" true)
+  (dict "key" "everythingMcp" "name" "everything-mcp" "port" 3001 "http" false) }}
+{{- $v := index $.Values $u.key }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $rel }}-{{ $u.name }}
+  labels: {{- include "platform.labels" $ | nindent 4 }}
+spec:
+  selector: {{- include "platform.selector" (list $ $u.name) | nindent 4 }}
+  ports:
+    - { name: http, port: {{ $u.port }}, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $rel }}-{{ $u.name }}
+  labels: {{- include "platform.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $u.name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "platform.selector" (list $ $u.name) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "platform.selector" (list $ $u.name) | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {{- include "platform.podSecurity" $ | nindent 8 }}
+      containers:
+        - name: {{ $u.name }}
+          image: {{ $v.image }}
+          imagePullPolicy: {{ $v.pullPolicy }}
+          {{- if eq $u.name "utils-mcp" }}
+          env:
+            {{- include "platform.secretEnv" (list $ "MCP_TOKEN" (include "platform.secretName" $) "UTILS_MCP_TOKEN") | nindent 12 }}
+          {{- end }}
+          ports:
+            - { name: http, containerPort: {{ $u.port }} }
+          {{- if $u.http }}
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 20 }
+          {{- else }}
+          # The reference server has no health endpoint; an open port is the best signal.
+          readinessProbe: { tcpSocket: { port: http }, periodSeconds: 5 }
+          livenessProbe: { tcpSocket: { port: http }, periodSeconds: 20 }
+          {{- end }}
+          securityContext: {{- include "platform.containerSecurity" $ | nindent 12 }}
+          resources: {{- toYaml $v.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+{{- end }}
